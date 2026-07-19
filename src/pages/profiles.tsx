@@ -41,6 +41,7 @@ import {
   BaseStyledTextField,
   type DialogRef,
 } from '@/components/base'
+import { ProfileAggregateDialog } from '@/components/profile/profile-aggregate-dialog'
 import { ProfileMore } from '@/components/profile/profile-more'
 import {
   ProfileViewer,
@@ -73,7 +74,10 @@ import {
   useSetLoadingCache,
   useThemeMode,
 } from '@/services/states'
-import { buildAggregatedConfig } from '@/utils/aggregate-profiles'
+import {
+  type AggregateMode,
+  buildAggregatedConfig,
+} from '@/utils/aggregate-profiles'
 import { debugLog } from '@/utils/debug'
 
 // 与 src-tauri/src/main.rs 的 worker_limit 上限(8)保持一致，避免前后端更新风暴不对齐
@@ -153,6 +157,8 @@ const ProfilePage = () => {
   const [selectedProfiles, setSelectedProfiles] = useState<Set<string>>(
     () => new Set(),
   )
+  const [aggregateOpen, setAggregateOpen] = useState(false)
+  const [aggregateLoading, setAggregateLoading] = useState(false)
 
   // Profile 切换在前端串行执行；队列中只保留用户最后一次选择。
   const latestSwitchTargetRef = useRef<string | null>(null)
@@ -680,57 +686,107 @@ const ProfilePage = () => {
     await runProfileUpdates(target)
   })
 
-  const onAggregate = useLockFn(async () => {
-    const subs = profileItems.filter((e) => e.type === 'remote')
-    if (subs.length === 0) {
+  const remoteAggregateItems = useMemo(
+    () =>
+      profileItems
+        .filter((item) => item.type === 'remote')
+        .map((item) => ({
+          uid: item.uid,
+          name: item.name || item.uid,
+        })),
+    [profileItems],
+  )
+
+  const openAggregateDialog = () => {
+    if (remoteAggregateItems.length === 0) {
       showNotice.info('profiles.page.feedback.notifications.aggregateEmpty')
       return
     }
+    setAggregateOpen(true)
+  }
 
-    try {
-      const sources: { name: string; content: string }[] = []
-      for (const item of subs) {
-        try {
-          const content = await readProfileFile(item.uid)
-          sources.push({ name: item.name || item.uid, content })
-        } catch (err) {
-          console.error(`读取订阅 ${item.uid} 失败:`, err)
-        }
-      }
+  const onAggregateConfirm = useLockFn(
+    async (mode: AggregateMode, orderedUids: string[]) => {
+      const byUid = new Map(
+        profileItems.map((item) => [item.uid, item] as const),
+      )
+      const orderedSubs = orderedUids
+        .map((uid) => byUid.get(uid))
+        .filter(
+          (item): item is IProfileItem => !!item && item.type === 'remote',
+        )
 
-      const { yaml, nodeCount, subCount } = buildAggregatedConfig(sources, {
-        selectGroup: t('profiles.page.aggregate.selectGroup'),
-        autoGroup: t('profiles.page.aggregate.autoGroup'),
-      })
-
-      if (subCount === 0) {
+      if (orderedSubs.length === 0) {
         showNotice.info('profiles.page.feedback.notifications.aggregateEmpty')
         return
       }
 
-      await createProfile(
-        {
-          type: 'local',
-          name: t('profiles.page.aggregate.profileName'),
-          desc: '',
-          url: '',
-          option: { with_proxy: false, self_proxy: false },
-        } as IProfileItem,
-        yaml,
-      )
-      await mutateProfiles()
+      setAggregateLoading(true)
+      try {
+        const sources: { name: string; content: string }[] = []
+        for (const item of orderedSubs) {
+          try {
+            const content = await readProfileFile(item.uid)
+            sources.push({ name: item.name || item.uid, content })
+          } catch (err) {
+            console.error(`读取订阅 ${item.uid} 失败:`, err)
+          }
+        }
 
-      showNotice.success(
-        'profiles.page.feedback.notifications.aggregateSuccess',
-        { count: nodeCount, subs: subCount },
-      )
-    } catch (err: any) {
-      showNotice.error(
-        'profiles.page.feedback.notifications.aggregateFail',
-        String(err),
-      )
-    }
-  })
+        const { yaml, nodeCount, subCount, warnings } = buildAggregatedConfig(
+          sources,
+          {
+            selectGroup:
+              mode === 'chain'
+                ? t('profiles.page.aggregate.chainSelectGroup')
+                : t('profiles.page.aggregate.selectGroup'),
+            autoGroup: t('profiles.page.aggregate.autoGroup'),
+            exitGroup: t('profiles.page.aggregate.exitGroup'),
+            nodesProvider: t('profiles.page.aggregate.nodesProvider'),
+          },
+          { mode },
+        )
+
+        if (subCount === 0) {
+          showNotice.info('profiles.page.feedback.notifications.aggregateEmpty')
+          return
+        }
+
+        await createProfile(
+          {
+            type: 'local',
+            name:
+              mode === 'chain'
+                ? t('profiles.page.aggregate.chainProfileName')
+                : t('profiles.page.aggregate.profileName'),
+            desc: '',
+            url: '',
+            option: { with_proxy: false, self_proxy: false },
+          } as IProfileItem,
+          yaml,
+        )
+        await mutateProfiles()
+        setAggregateOpen(false)
+
+        showNotice.success(
+          mode === 'chain'
+            ? 'profiles.page.feedback.notifications.chainAggregateSuccess'
+            : 'profiles.page.feedback.notifications.aggregateSuccess',
+          { count: nodeCount, subs: subCount },
+        )
+        if (warnings.length > 0) {
+          showNotice.info(warnings[0])
+        }
+      } catch (err: any) {
+        showNotice.error(
+          'profiles.page.feedback.notifications.aggregateFail',
+          String(err),
+        )
+      } finally {
+        setAggregateLoading(false)
+      }
+    },
+  )
 
   const onCopyLink = async () => {
     const text = await readText()
@@ -871,7 +927,7 @@ const ProfilePage = () => {
                 size="small"
                 color="inherit"
                 title={t('profiles.page.actions.aggregate')}
-                onClick={onAggregate}
+                onClick={openAggregateDialog}
               >
                 <LayersRounded />
               </IconButton>
@@ -1139,6 +1195,18 @@ const ProfilePage = () => {
           }
         }}
       />
+      {aggregateOpen && (
+        <ProfileAggregateDialog
+          key={remoteAggregateItems.map((item) => item.uid).join(',')}
+          open={aggregateOpen}
+          items={remoteAggregateItems}
+          loading={aggregateLoading}
+          onCancel={() => {
+            if (!aggregateLoading) setAggregateOpen(false)
+          }}
+          onConfirm={onAggregateConfirm}
+        />
+      )}
       <ConfigViewer ref={configRef} />
     </BasePage>
   )

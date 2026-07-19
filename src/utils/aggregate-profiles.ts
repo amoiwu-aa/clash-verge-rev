@@ -1,5 +1,7 @@
 import yaml from 'js-yaml'
 
+export type AggregateMode = 'pool' | 'chain'
+
 export interface AggregateSource {
   /** Subscription display name, used as a prefix to keep node names unique. */
   name: string
@@ -10,22 +12,45 @@ export interface AggregateSource {
 export interface AggregateLabels {
   /** Name for the top-level manual selector group. */
   selectGroup: string
-  /** Name for the automatic (url-test) group covering every node. */
+  /** Name for the automatic (url-test) group covering every node (pool mode). */
   autoGroup: string
+  /**
+   * Per-subscription exit group name. Supports `{{name}}` placeholder.
+   * Example: "{{name}} Exit"
+   */
+  exitGroup: string
+  /**
+   * Inline provider name for a subscription's nodes. Supports `{{name}}`.
+   * Example: "{{name}} Nodes"
+   */
+  nodesProvider: string
+}
+
+export interface AggregateOptions {
+  /** Aggregation strategy. Defaults to `pool`. */
+  mode?: AggregateMode
 }
 
 export interface AggregateResult {
   /** Serialized YAML for the merged local profile. */
   yaml: string
-  /** Total number of proxy nodes collected across subscriptions. */
+  /** Total number of inline proxy nodes collected across subscriptions. */
   nodeCount: number
   /** Number of subscriptions that contributed at least one node or provider. */
   subCount: number
+  /** Non-fatal issues (e.g. skipped file providers). */
+  warnings: string[]
 }
 
 interface ProxyNode {
   name?: unknown
   [key: string]: unknown
+}
+
+interface ParsedSub {
+  label: string
+  proxies: ProxyNode[]
+  providers: Array<{ key: string; value: Record<string, unknown> }>
 }
 
 const HEALTH_CHECK_URL = 'https://www.gstatic.com/generate_204'
@@ -51,24 +76,15 @@ const makeUniqueName = (base: string, used: Set<string>): string => {
   return name
 }
 
-/**
- * Merges the proxies (and any `proxy-providers`) of several subscriptions into a
- * single Clash/mihomo config. Node names are prefixed with their subscription
- * name to avoid collisions, one url-test group is created per subscription, plus
- * a global auto group and a manual selector that a MATCH rule points at.
- */
-export function buildAggregatedConfig(
-  sources: AggregateSource[],
-  labels: AggregateLabels,
-): AggregateResult {
-  const usedNames = new Set<string>()
-  const proxies: ProxyNode[] = []
-  const proxyProviders: Record<string, unknown> = {}
-  const subGroups: Array<{ name: string; proxies: string[]; use: string[] }> =
-    []
-  const allNodeNames: string[] = []
+const formatLabel = (template: string, name: string): string => {
+  if (template.includes('{{name}}')) {
+    return template.split('{{name}}').join(name)
+  }
+  return `${name}${template}`
+}
 
-  let subCount = 0
+const parseSources = (sources: AggregateSource[]): ParsedSub[] => {
+  const parsed: ParsedSub[] = []
 
   for (const source of sources) {
     let doc: unknown
@@ -79,82 +95,183 @@ export function buildAggregatedConfig(
     }
     if (!isRecord(doc)) continue
 
-    const subLabel = source.name?.trim() || 'Subscription'
+    const label = source.name?.trim() || 'Subscription'
     const rawProxies = Array.isArray(doc.proxies)
-      ? (doc.proxies as ProxyNode[])
+      ? (doc.proxies as ProxyNode[]).filter(
+          (node) => isRecord(node) && typeof node.name === 'string',
+        )
       : []
     const rawProviders = isRecord(doc['proxy-providers'])
       ? (doc['proxy-providers'] as Record<string, unknown>)
       : {}
 
+    const providers: ParsedSub['providers'] = []
+    for (const [key, value] of Object.entries(rawProviders)) {
+      if (!isRecord(value)) continue
+      providers.push({ key, value })
+    }
+
+    if (rawProxies.length === 0 && providers.length === 0) continue
+    parsed.push({ label, proxies: rawProxies, providers })
+  }
+
+  return parsed
+}
+
+const mergeProviderOverride = (
+  existing: unknown,
+  patch: Record<string, unknown>,
+): Record<string, unknown> => {
+  const base = isRecord(existing) ? { ...existing } : {}
+
+  for (const [key, value] of Object.entries(patch)) {
+    // Preserve an author-defined dialer-proxy (internal chain inside the sub).
+    if (key === 'dialer-proxy' && typeof base['dialer-proxy'] === 'string') {
+      continue
+    }
+    if (
+      key === 'additional-prefix' &&
+      typeof value === 'string' &&
+      typeof base['additional-prefix'] === 'string'
+    ) {
+      base['additional-prefix'] = `${value}${base['additional-prefix']}`
+      continue
+    }
+    base[key] = value
+  }
+
+  return base
+}
+
+const buildHealthCheckedGroup = (
+  name: string,
+  use: string[],
+  proxies?: string[],
+): Record<string, unknown> => {
+  const group: Record<string, unknown> = {
+    name,
+    type: 'url-test',
+    url: HEALTH_CHECK_URL,
+    interval: HEALTH_CHECK_INTERVAL,
+    lazy: true,
+  }
+  if (proxies?.length) group.proxies = proxies
+  if (use.length) group.use = use
+  return group
+}
+
+const dumpConfig = (
+  config: Record<string, unknown>,
+  mode: AggregateMode,
+): string => {
+  const header =
+    mode === 'chain'
+      ? '# Generated by Clash Verge - Chained subscriptions\n\n'
+      : '# Generated by Clash Verge - Aggregated subscriptions\n\n'
+  return header + yaml.dump(config, { lineWidth: -1, noRefs: true })
+}
+
+/**
+ * Pool mode: flatten every subscription's proxies/providers into one node pool
+ * with a global auto group and a manual selector.
+ */
+const buildPoolConfig = (
+  parsed: ParsedSub[],
+  labels: AggregateLabels,
+): AggregateResult => {
+  const usedNames = new Set<string>()
+  const proxies: ProxyNode[] = []
+  const proxyProviders: Record<string, unknown> = {}
+  const subGroups: Array<{ name: string; proxies: string[]; use: string[] }> =
+    []
+  const allNodeNames: string[] = []
+  const warnings: string[] = []
+  let subCount = 0
+
+  for (const sub of parsed) {
     const subNodeNames: string[] = []
     const subUse: string[] = []
+    const nameMap = new Map<string, string>()
 
-    for (const node of rawProxies) {
-      if (!isRecord(node) || typeof node.name !== 'string') continue
+    for (const node of sub.proxies) {
+      const originalName = node.name as string
       const newName = makeUniqueName(
-        `${subLabel}${NAME_SEPARATOR}${node.name}`,
+        `${sub.label}${NAME_SEPARATOR}${originalName}`,
         usedNames,
       )
+      nameMap.set(originalName, newName)
       proxies.push({ ...node, name: newName })
       subNodeNames.push(newName)
       allNodeNames.push(newName)
     }
 
-    for (const [key, value] of Object.entries(rawProviders)) {
-      if (!isRecord(value)) continue
+    // Rewrite same-subscription dialer-proxy references after rename.
+    for (
+      let i = proxies.length - subNodeNames.length;
+      i < proxies.length;
+      i++
+    ) {
+      const dialer = proxies[i]['dialer-proxy']
+      if (typeof dialer === 'string' && nameMap.has(dialer)) {
+        proxies[i] = { ...proxies[i], 'dialer-proxy': nameMap.get(dialer) }
+      }
+    }
+
+    for (const { key, value } of sub.providers) {
+      if (value.type === 'file') {
+        warnings.push(
+          `Skipped file provider "${key}" from "${sub.label}" (path-based providers are not portable)`,
+        )
+        continue
+      }
+
       const newKey = makeUniqueName(
-        `${subLabel}${NAME_SEPARATOR}${key}`,
+        `${sub.label}${NAME_SEPARATOR}${key}`,
         usedNames,
       )
-      const provider = { ...value }
+      const provider: Record<string, unknown> = { ...value }
       // Drop the on-disk cache path so the core derives a unique one from the
       // (now unique) provider name; otherwise duplicated paths could clash.
       delete provider.path
+      provider.override = mergeProviderOverride(provider.override, {
+        'additional-prefix': `${sub.label}${NAME_SEPARATOR}`,
+      })
       proxyProviders[newKey] = provider
       subUse.push(newKey)
     }
 
     if (subNodeNames.length === 0 && subUse.length === 0) continue
 
-    const groupName = makeUniqueName(subLabel, usedNames)
+    const groupName = makeUniqueName(sub.label, usedNames)
     subGroups.push({ name: groupName, proxies: subNodeNames, use: subUse })
     subCount += 1
   }
 
   const autoName = makeUniqueName(labels.autoGroup, usedNames)
   const selectName = makeUniqueName(labels.selectGroup, usedNames)
-
-  const proxyGroups: Record<string, unknown>[] = []
-
-  proxyGroups.push({
-    name: selectName,
-    type: 'select',
-    proxies: [autoName, ...subGroups.map((group) => group.name), 'DIRECT'],
-  })
+  const allUse = Array.from(new Set(subGroups.flatMap((group) => group.use)))
 
   const autoGroup: Record<string, unknown> = {
     name: autoName,
     type: 'url-test',
     url: HEALTH_CHECK_URL,
     interval: HEALTH_CHECK_INTERVAL,
+    lazy: true,
   }
   if (allNodeNames.length) autoGroup.proxies = allNodeNames
-  const allUse = Array.from(new Set(subGroups.flatMap((group) => group.use)))
   if (allUse.length) autoGroup.use = allUse
-  proxyGroups.push(autoGroup)
 
-  for (const group of subGroups) {
-    const entry: Record<string, unknown> = {
-      name: group.name,
-      type: 'url-test',
-      url: HEALTH_CHECK_URL,
-      interval: HEALTH_CHECK_INTERVAL,
-    }
-    if (group.proxies.length) entry.proxies = group.proxies
-    if (group.use.length) entry.use = group.use
-    proxyGroups.push(entry)
-  }
+  const proxyGroups: Record<string, unknown>[] = [
+    {
+      name: selectName,
+      type: 'select',
+      proxies: [autoName, ...subGroups.map((group) => group.name), 'DIRECT'],
+    },
+    autoGroup,
+    ...subGroups.map((group) =>
+      buildHealthCheckedGroup(group.name, group.use, group.proxies),
+    ),
+  ]
 
   const config: Record<string, unknown> = {
     proxies,
@@ -165,8 +282,136 @@ export function buildAggregatedConfig(
     config['proxy-providers'] = proxyProviders
   }
 
-  const header = '# Generated by Clash Verge - Aggregated subscriptions\n\n'
-  const body = yaml.dump(config, { lineWidth: -1, noRefs: true })
+  return {
+    yaml: dumpConfig(config, 'pool'),
+    nodeCount: allNodeNames.length,
+    subCount,
+    warnings,
+  }
+}
 
-  return { yaml: header + body, nodeCount: allNodeNames.length, subCount }
+/**
+ * Chain mode: subscription order is entry → … → exit. Each subscription gets an
+ * exit url-test group; later subscriptions dial through the previous exit via
+ * provider override.dialer-proxy. Inline nodes are wrapped in inline providers
+ * so renaming/chaining can be applied uniformly without breaking name refs.
+ */
+const buildChainConfig = (
+  parsed: ParsedSub[],
+  labels: AggregateLabels,
+): AggregateResult => {
+  const usedNames = new Set<string>()
+  const proxyProviders: Record<string, unknown> = {}
+  const subExits: Array<{ name: string; use: string[] }> = []
+  const warnings: string[] = []
+  let nodeCount = 0
+  let previousExit: string | null = null
+
+  for (const sub of parsed) {
+    const use: string[] = []
+    const overridePatch: Record<string, unknown> = {
+      'additional-prefix': `${sub.label}${NAME_SEPARATOR}`,
+    }
+    if (previousExit) {
+      overridePatch['dialer-proxy'] = previousExit
+    }
+
+    if (sub.proxies.length > 0) {
+      const providerName = makeUniqueName(
+        formatLabel(labels.nodesProvider, sub.label),
+        usedNames,
+      )
+      proxyProviders[providerName] = {
+        type: 'inline',
+        override: { ...overridePatch },
+        payload: sub.proxies.map((node) => ({ ...node })),
+      }
+      use.push(providerName)
+      nodeCount += sub.proxies.length
+    }
+
+    for (const { key, value } of sub.providers) {
+      if (value.type === 'file') {
+        warnings.push(
+          `Skipped file provider "${key}" from "${sub.label}" (path-based providers are not portable)`,
+        )
+        continue
+      }
+
+      const newKey = makeUniqueName(
+        `${sub.label}${NAME_SEPARATOR}${key}`,
+        usedNames,
+      )
+      const provider: Record<string, unknown> = { ...value }
+      delete provider.path
+      provider.override = mergeProviderOverride(
+        provider.override,
+        overridePatch,
+      )
+      proxyProviders[newKey] = provider
+      use.push(newKey)
+    }
+
+    if (use.length === 0) continue
+
+    const exitName = makeUniqueName(
+      formatLabel(labels.exitGroup, sub.label),
+      usedNames,
+    )
+    subExits.push({ name: exitName, use })
+    previousExit = exitName
+  }
+
+  const selectName = makeUniqueName(labels.selectGroup, usedNames)
+  // Prefer the final hop as the default selectable exit, then earlier hops.
+  const selectProxies = [
+    ...[...subExits].reverse().map((item) => item.name),
+    'DIRECT',
+  ]
+
+  const proxyGroups: Record<string, unknown>[] = [
+    {
+      name: selectName,
+      type: 'select',
+      proxies: selectProxies,
+    },
+    ...subExits.map((item) => buildHealthCheckedGroup(item.name, item.use)),
+  ]
+
+  const config: Record<string, unknown> = {
+    'proxy-providers': proxyProviders,
+    'proxy-groups': proxyGroups,
+    rules: [`MATCH,${selectName}`],
+  }
+
+  return {
+    yaml: dumpConfig(config, 'chain'),
+    nodeCount,
+    subCount: subExits.length,
+    warnings,
+  }
+}
+
+/**
+ * Merges the proxies (and any `proxy-providers`) of several subscriptions into a
+ * single Clash/mihomo config.
+ *
+ * - `pool` (default): node-pool aggregation with per-sub + global url-test groups.
+ * - `chain`: each later subscription dials through the previous subscription's
+ *   exit group via `override.dialer-proxy`.
+ *
+ * Source order matters for chain mode (first = entry hop, last = exit hop).
+ */
+export function buildAggregatedConfig(
+  sources: AggregateSource[],
+  labels: AggregateLabels,
+  options: AggregateOptions = {},
+): AggregateResult {
+  const mode = options.mode ?? 'pool'
+  const parsed = parseSources(sources)
+
+  if (mode === 'chain') {
+    return buildChainConfig(parsed, labels)
+  }
+  return buildPoolConfig(parsed, labels)
 }

@@ -9,8 +9,25 @@
     },
     "aggregate": {
       "profileName": "聚合订阅",
+      "chainProfileName": "链式聚合订阅",
       "selectGroup": "聚合 - 节点选择",
-      "autoGroup": "聚合 - 自动选择"
+      "autoGroup": "聚合 - 自动选择",
+      "chainSelectGroup": "链式出口",
+      "exitGroup": "{{name}} 出口",
+      "nodesProvider": "{{name}} 节点",
+      "dialog": {
+        "title": "聚合订阅",
+        "description": "将远程订阅合并为一个本地配置。",
+        "modePool": "节点池 — 合并全部节点到同一选择池",
+        "modeChain": "订阅链 — 后序订阅经由前序订阅出站",
+        "poolHint": "将合并 {{count}} 个远程订阅为节点池。",
+        "chainHint": "拖拽调整跳数顺序：第一个为入口（出站），最后一个为出口。",
+        "chainUdpWarning": "若任一跳无法转发 UDP，UDP/QUIC 可能失败。中间跳建议使用支持 TCP 的协议。",
+        "chainOrder": "链路顺序",
+        "entryHop": "入口",
+        "middleHop": "中继",
+        "exitHop": "出口"
+      }
     },
     "batch": {
       "actions": {
@@ -47,6 +64,7 @@
         "batchDeleted": "选中的订阅已成功删除",
         "aggregateEmpty": "没有可聚合的远程订阅",
         "aggregateSuccess": "已从 {{subs}} 个订阅聚合 {{count}} 个节点",
+        "chainAggregateSuccess": "已将 {{subs}} 个订阅链式连接，共 {{count}} 个节点",
         "aggregateFail": "聚合订阅失败"
       },
       "notices": {
