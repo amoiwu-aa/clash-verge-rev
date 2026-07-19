@@ -344,10 +344,16 @@ export interface TranslationResources {
       }
       page: {
         actions: {
+          aggregate: string
           import: string
           reactivate: string
           updateAll: string
           viewRuntimeConfig: string
+        }
+        aggregate: {
+          autoGroup: string
+          profileName: string
+          selectGroup: string
         }
         batch: {
           actions: {
@@ -372,6 +378,9 @@ export interface TranslationResources {
             forceRefreshCompleted: string
           }
           notifications: {
+            aggregateEmpty: string
+            aggregateFail: string
+            aggregateSuccess: string
             batchDeleted: string
             importFail: string
             importNeedsRefresh: string

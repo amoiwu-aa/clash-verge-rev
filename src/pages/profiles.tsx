@@ -20,6 +20,7 @@ import {
   ContentPasteRounded,
   DeleteRounded,
   IndeterminateCheckBoxRounded,
+  LayersRounded,
   LocalFireDepartmentRounded,
   RefreshRounded,
   TextSnippetOutlined,
@@ -57,6 +58,7 @@ import {
   //restartCore,
   getRuntimeLogs,
   importProfile,
+  readProfileFile,
   reorderProfile,
   updateProfile,
 } from '@/services/cmds'
@@ -71,6 +73,7 @@ import {
   useSetLoadingCache,
   useThemeMode,
 } from '@/services/states'
+import { buildAggregatedConfig } from '@/utils/aggregate-profiles'
 import { debugLog } from '@/utils/debug'
 
 // 与 src-tauri/src/main.rs 的 worker_limit 上限(8)保持一致，避免前后端更新风暴不对齐
@@ -677,6 +680,58 @@ const ProfilePage = () => {
     await runProfileUpdates(target)
   })
 
+  const onAggregate = useLockFn(async () => {
+    const subs = profileItems.filter((e) => e.type === 'remote')
+    if (subs.length === 0) {
+      showNotice.info('profiles.page.feedback.notifications.aggregateEmpty')
+      return
+    }
+
+    try {
+      const sources: { name: string; content: string }[] = []
+      for (const item of subs) {
+        try {
+          const content = await readProfileFile(item.uid)
+          sources.push({ name: item.name || item.uid, content })
+        } catch (err) {
+          console.error(`读取订阅 ${item.uid} 失败:`, err)
+        }
+      }
+
+      const { yaml, nodeCount, subCount } = buildAggregatedConfig(sources, {
+        selectGroup: t('profiles.page.aggregate.selectGroup'),
+        autoGroup: t('profiles.page.aggregate.autoGroup'),
+      })
+
+      if (subCount === 0) {
+        showNotice.info('profiles.page.feedback.notifications.aggregateEmpty')
+        return
+      }
+
+      await createProfile(
+        {
+          type: 'local',
+          name: t('profiles.page.aggregate.profileName'),
+          desc: '',
+          url: '',
+          option: { with_proxy: false, self_proxy: false },
+        } as IProfileItem,
+        yaml,
+      )
+      await mutateProfiles()
+
+      showNotice.success(
+        'profiles.page.feedback.notifications.aggregateSuccess',
+        { count: nodeCount, subs: subCount },
+      )
+    } catch (err: any) {
+      showNotice.error(
+        'profiles.page.feedback.notifications.aggregateFail',
+        String(err),
+      )
+    }
+  })
+
   const onCopyLink = async () => {
     const text = await readText()
     if (text) setUrl(text)
@@ -810,6 +865,15 @@ const ProfilePage = () => {
                 onClick={onUpdateAll}
               >
                 <RefreshRounded />
+              </IconButton>
+
+              <IconButton
+                size="small"
+                color="inherit"
+                title={t('profiles.page.actions.aggregate')}
+                onClick={onAggregate}
+              >
+                <LayersRounded />
               </IconButton>
 
               <IconButton

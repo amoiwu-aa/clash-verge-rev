@@ -4,7 +4,13 @@
       "updateAll": "更新所有订阅",
       "viewRuntimeConfig": "查看运行时订阅",
       "reactivate": "重新激活订阅",
+      "aggregate": "聚合所有订阅",
       "import": "导入"
+    },
+    "aggregate": {
+      "profileName": "聚合订阅",
+      "selectGroup": "聚合 - 节点选择",
+      "autoGroup": "聚合 - 自动选择"
     },
     "batch": {
       "actions": {
@@ -38,7 +44,10 @@
         "profileSwitched": "订阅已切换",
         "profileReactivated": "订阅已激活",
         "switchBusy": "正在切换订阅，请稍后重试",
-        "batchDeleted": "选中的订阅已成功删除"
+        "batchDeleted": "选中的订阅已成功删除",
+        "aggregateEmpty": "没有可聚合的远程订阅",
+        "aggregateSuccess": "已从 {{subs}} 个订阅聚合 {{count}} 个节点",
+        "aggregateFail": "聚合订阅失败"
       },
       "notices": {
         "forceRefreshCompleted": "数据已强制刷新",
