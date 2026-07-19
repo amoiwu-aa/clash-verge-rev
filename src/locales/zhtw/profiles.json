@@ -4,7 +4,30 @@
       "updateAll": "更新所有訂閱",
       "viewRuntimeConfig": "查看執行時訂閱",
       "reactivate": "重新啟用訂閱",
+      "aggregate": "Aggregate All Subscriptions",
       "import": "匯入"
+    },
+    "aggregate": {
+      "profileName": "Aggregated Subscriptions",
+      "chainProfileName": "Chained Subscriptions",
+      "selectGroup": "Aggregate - Select",
+      "autoGroup": "Aggregate - Auto",
+      "chainSelectGroup": "Chain Exit",
+      "exitGroup": "{{name}} Exit",
+      "nodesProvider": "{{name}} Nodes",
+      "dialog": {
+        "title": "Aggregate Subscriptions",
+        "description": "Combine remote subscriptions into one local profile.",
+        "modePool": "Node pool — merge all nodes into one selectable pool",
+        "modeChain": "Subscription chain — later hops dial through earlier ones",
+        "poolHint": "{{count}} remote subscriptions will be merged into a node pool.",
+        "chainHint": "Drag to set hop order: first is the entry (outbound), last is the exit.",
+        "chainUdpWarning": "UDP/QUIC may fail if any hop cannot forward UDP. Prefer TCP-capable protocols for intermediate hops.",
+        "chainOrder": "Chain order",
+        "entryHop": "Entry",
+        "middleHop": "Hop",
+        "exitHop": "Exit"
+      }
     },
     "batch": {
       "actions": {
@@ -38,7 +61,11 @@
         "profileSwitched": "訂閱已切換",
         "profileReactivated": "訂閱已啟用",
         "switchBusy": "正在切換配置，請稍後重試",
-        "batchDeleted": "選取的訂閱已成功刪除"
+        "batchDeleted": "選取的訂閱已成功刪除",
+        "aggregateEmpty": "No remote subscriptions to aggregate",
+        "aggregateSuccess": "Aggregated {{count}} nodes from {{subs}} subscriptions",
+        "chainAggregateSuccess": "Chained {{count}} nodes across {{subs}} subscriptions",
+        "aggregateFail": "Failed to aggregate subscriptions"
       },
       "notices": {
         "forceRefreshCompleted": "Force refresh completed",

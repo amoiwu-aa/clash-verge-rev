@@ -4,7 +4,30 @@
       "updateAll": "Actualizar todas las suscripciones",
       "viewRuntimeConfig": "Ver configuración en tiempo de ejecución",
       "reactivate": "Reactivar suscripciones",
+      "aggregate": "Aggregate All Subscriptions",
       "import": "Importar"
+    },
+    "aggregate": {
+      "profileName": "Aggregated Subscriptions",
+      "chainProfileName": "Chained Subscriptions",
+      "selectGroup": "Aggregate - Select",
+      "autoGroup": "Aggregate - Auto",
+      "chainSelectGroup": "Chain Exit",
+      "exitGroup": "{{name}} Exit",
+      "nodesProvider": "{{name}} Nodes",
+      "dialog": {
+        "title": "Aggregate Subscriptions",
+        "description": "Combine remote subscriptions into one local profile.",
+        "modePool": "Node pool — merge all nodes into one selectable pool",
+        "modeChain": "Subscription chain — later hops dial through earlier ones",
+        "poolHint": "{{count}} remote subscriptions will be merged into a node pool.",
+        "chainHint": "Drag to set hop order: first is the entry (outbound), last is the exit.",
+        "chainUdpWarning": "UDP/QUIC may fail if any hop cannot forward UDP. Prefer TCP-capable protocols for intermediate hops.",
+        "chainOrder": "Chain order",
+        "entryHop": "Entry",
+        "middleHop": "Hop",
+        "exitHop": "Exit"
+      }
     },
     "batch": {
       "actions": {
@@ -38,7 +61,11 @@
         "profileSwitched": "Suscripción cambiada",
         "profileReactivated": "Suscripción reactivada",
         "switchBusy": "Profile switch is already in progress",
-        "batchDeleted": "Selected profiles deleted successfully"
+        "batchDeleted": "Selected profiles deleted successfully",
+        "aggregateEmpty": "No remote subscriptions to aggregate",
+        "aggregateSuccess": "Aggregated {{count}} nodes from {{subs}} subscriptions",
+        "chainAggregateSuccess": "Chained {{count}} nodes across {{subs}} subscriptions",
+        "aggregateFail": "Failed to aggregate subscriptions"
       },
       "notices": {
         "forceRefreshCompleted": "Force refresh completed",

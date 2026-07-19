@@ -344,10 +344,33 @@ export interface TranslationResources {
       }
       page: {
         actions: {
+          aggregate: string
           import: string
           reactivate: string
           updateAll: string
           viewRuntimeConfig: string
+        }
+        aggregate: {
+          autoGroup: string
+          chainProfileName: string
+          chainSelectGroup: string
+          dialog: {
+            chainHint: string
+            chainOrder: string
+            chainUdpWarning: string
+            description: string
+            entryHop: string
+            exitHop: string
+            middleHop: string
+            modeChain: string
+            modePool: string
+            poolHint: string
+            title: string
+          }
+          exitGroup: string
+          nodesProvider: string
+          profileName: string
+          selectGroup: string
         }
         batch: {
           actions: {
@@ -372,7 +395,11 @@ export interface TranslationResources {
             forceRefreshCompleted: string
           }
           notifications: {
+            aggregateEmpty: string
+            aggregateFail: string
+            aggregateSuccess: string
             batchDeleted: string
+            chainAggregateSuccess: string
             importFail: string
             importNeedsRefresh: string
             importRetry: string
